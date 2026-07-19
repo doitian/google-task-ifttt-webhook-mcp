@@ -55,6 +55,12 @@ setInterval(
 
 const MCP_VERSION = "2024-11-05";
 
+const APP_ICON =
+  "data:image/svg+xml," +
+  encodeURIComponent(
+    '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><circle cx="32" cy="32" r="30" fill="#1a73e8"/><path d="M28 42l-8-8 3-3 5 5 13-13 3 3z" fill="#fff"/></svg>',
+  );
+
 const SERVER_INFO = {
   name: "google-task-ifttt-webhook-mcp",
   version: "1.0.0",
@@ -323,7 +329,7 @@ async function handleRpcMethod(
         capabilities: { tools: {} },
         serverInfo: {
           ...SERVER_INFO,
-          ...(env.ICON_URL ? { icon: env.ICON_URL } : {}),
+          icon: env.ICON_URL || APP_ICON,
         },
       };
 
@@ -408,13 +414,15 @@ function authorizeForm(baseUrl: string, query: string): string {
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>Google Task MCP — Authorize</title>
+  <link rel="icon" href="${APP_ICON}">
   <style>
     * { box-sizing:border-box;margin:0;padding:0 }
     body { font-family:system-ui,sans-serif;background:#f5f5f5;display:flex;justify-content:center;align-items:center;min-height:100vh }
-    .card { background:#fff;padding:2rem;border-radius:12px;box-shadow:0 2px 8px rgba(0,0,0,.1);max-width:400px;width:100% }
-    h1 { font-size:1.25rem;margin-bottom:1rem }
+    .card { background:#fff;padding:2rem;border-radius:12px;box-shadow:0 2px 8px rgba(0,0,0,.1);max-width:400px;width:100%;text-align:center }
+    .icon { width:48px;height:48px;margin-bottom:1rem }
+    h1 { font-size:1.25rem;margin-bottom:.5rem }
     p { color:#666;margin-bottom:1.5rem;font-size:.9rem }
-    label { display:block;font-size:.85rem;font-weight:600;margin-bottom:.5rem }
+    label { display:block;font-size:.85rem;font-weight:600;margin-bottom:.5rem;text-align:left }
     input { width:100%;padding:.6rem;border:1px solid #ddd;border-radius:6px;font-size:.9rem;margin-bottom:1rem }
     button { width:100%;padding:.6rem;background:#1a1a1a;color:#fff;border:none;border-radius:6px;font-size:.9rem;cursor:pointer }
     button:hover { background:#333 }
@@ -423,8 +431,9 @@ function authorizeForm(baseUrl: string, query: string): string {
 </head>
 <body>
   <div class="card">
-    <h1>Authorize Grok MCP Client</h1>
-    <p>Enter the server API key to grant Grok access to your Google Tasks MCP server.</p>
+    <img class="icon" src="${APP_ICON}" alt="Google Tasks" width="48" height="48">
+    <h1>Google Task MCP</h1>
+    <p>Enter the server API key to grant Grok access to your Google Tasks.</p>
     <form method="post">
       <label for="key">API Key</label>
       <input id="key" name="key" type="password" autofocus required>
