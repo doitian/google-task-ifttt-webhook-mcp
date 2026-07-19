@@ -2,6 +2,7 @@ interface Env {
   IFTTT_MAKER_TASK_KEY: string;
   CF_ACCESS_TEAM_DOMAIN?: string;
   CF_ACCESS_AUD?: string;
+  API_KEY?: string;
 }
 
 type JsonRpcId = number | string | null;
@@ -320,12 +321,16 @@ export default {
       );
     }
 
-    const jwt =
+    const token =
       request.headers.get("Cf-Access-Jwt-Assertion") ??
       request.headers.get("Authorization")?.replace(/^Bearer\s+/i, "");
-    if (!jwt || !verifyAccessJwt(jwt, env)) {
+
+    const apiKeyOk = env.API_KEY && token === env.API_KEY;
+    const jwtOk = !!token && verifyAccessJwt(token, env);
+
+    if (!apiKeyOk && !jwtOk) {
       return jsonResponse(
-        rpcError(null, -32001, "Unauthorized: Cloudflare Access authentication required"),
+        rpcError(null, -32001, "Unauthorized: valid API key or Cloudflare Access token required"),
         401,
       );
     }
