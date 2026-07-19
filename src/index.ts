@@ -295,26 +295,28 @@ export default {
       return new Response(null, { headers: corsHeaders() });
     }
 
-    if (
-      request.method === "GET" &&
-      url.pathname === "/.well-known/oauth-authorization-server"
-    ) {
+    if (url.pathname === "/.well-known/oauth-authorization-server") {
       if (!env.CF_ACCESS_TEAM_DOMAIN) {
         return jsonResponse(
           { error: "CF_ACCESS_TEAM_DOMAIN not configured" },
           500,
         );
       }
+      return jsonResponse({
+        issuer: `https://${env.CF_ACCESS_TEAM_DOMAIN}`,
+        authorization_endpoint: `https://${env.CF_ACCESS_TEAM_DOMAIN}/cdn-cgi/access/authorize`,
+        token_endpoint: `https://${env.CF_ACCESS_TEAM_DOMAIN}/cdn-cgi/access/token`,
+        grant_types_supported: ["authorization_code"],
+        response_types_supported: ["code"],
+        token_endpoint_auth_methods_supported: ["none"],
+        code_challenge_methods_supported: ["S256"],
+      });
+    }
+
+    if (url.pathname !== "/mcp") {
       return jsonResponse(
-        {
-          issuer: `https://${env.CF_ACCESS_TEAM_DOMAIN}`,
-          authorization_endpoint: `https://${env.CF_ACCESS_TEAM_DOMAIN}/cdn-cgi/access/authorize`,
-          token_endpoint: `https://${env.CF_ACCESS_TEAM_DOMAIN}/cdn-cgi/access/token`,
-          grant_types_supported: ["authorization_code"],
-          response_types_supported: ["code"],
-          token_endpoint_auth_methods_supported: ["none"],
-          code_challenge_methods_supported: ["S256"],
-        },
+        rpcError(null, -32600, `Not found: ${url.pathname}`),
+        404,
       );
     }
 
