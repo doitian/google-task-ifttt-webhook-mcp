@@ -318,7 +318,9 @@ export default {
       );
     }
 
-    const jwt = request.headers.get("Cf-Access-Jwt-Assertion");
+    const jwt =
+      request.headers.get("Cf-Access-Jwt-Assertion") ??
+      request.headers.get("Authorization")?.replace(/^Bearer\s+/i, "");
     if (!jwt || !verifyAccessJwt(jwt, env)) {
       return jsonResponse(
         rpcError(null, -32001, "Unauthorized: Cloudflare Access authentication required"),
