@@ -1,0 +1,16 @@
+{
+  "name": "google-task-ifttt-webhook-mcp",
+  "version": "1.0.0",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "deploy": "wrangler deploy",
+    "dev": "wrangler dev",
+    "start": "wrangler dev"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^5.0.0",
+    "typescript": "^5.8.0",
+    "wrangler": "^4.0.0"
+  }
+}
