@@ -1,7 +1,9 @@
+import { createRemoteJWKSet, jwtVerify } from "jose";
+
 interface Env {
   IFTTT_MAKER_TASK_KEY: string;
-  API_KEY?: string;
-  OAUTH_SIGNING_KEY?: string;
+  CF_ACCESS_TEAM_DOMAIN?: string;
+  CF_ACCESS_AUD?: string;
   ICON_URL?: string;
 }
 
@@ -34,24 +36,6 @@ interface ToolDef {
     required: string[];
   };
 }
-
-interface PendingCode {
-  codeChallenge: string;
-  redirectUri: string;
-  expiresAt: number;
-}
-
-const codes = new Map<string, PendingCode>();
-
-setInterval(
-  () => {
-    const now = Date.now();
-    for (const [code, entry] of codes) {
-      if (entry.expiresAt < now) codes.delete(code);
-    }
-  },
-  60_000,
-);
 
 const MCP_VERSION = "2024-11-05";
 
@@ -98,7 +82,7 @@ function corsHeaders(): Record<string, string> {
     "Access-Control-Allow-Origin": "*",
     "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
     "Access-Control-Allow-Headers":
-      "Content-Type, Accept, Authorization, Mcp-Session-Id",
+      "Content-Type, Accept, Authorization, Mcp-Session-Id, Cf-Access-Jwt-Assertion",
     "Access-Control-Expose-Headers": "Mcp-Session-Id",
   };
 }
@@ -115,13 +99,6 @@ function jsonResponse(
       ...corsHeaders(),
       ...extraHeaders,
     },
-  });
-}
-
-function htmlResponse(html: string, status = 200): Response {
-  return new Response(html, {
-    status,
-    headers: { "Content-Type": "text/html; charset=utf-8", ...corsHeaders() },
   });
 }
 
@@ -142,108 +119,35 @@ function rpcSuccess(id: JsonRpcId, result: unknown): JsonRpcResponse {
   return { jsonrpc: "2.0", id, result };
 }
 
-function decodeJwtPayload(jwt: string): Record<string, unknown> | null {
-  try {
-    const parts = jwt.split(".");
-    if (parts.length !== 3) return null;
-    return JSON.parse(
-      atob(parts[1].replace(/-/g, "+").replace(/_/g, "/")),
-    );
-  } catch {
-    return null;
-  }
+function teamDomainUrl(teamDomain: string): string {
+  const trimmed = teamDomain.replace(/\/$/, "");
+  return trimmed.startsWith("http") ? trimmed : `https://${trimmed}`;
 }
 
-async function verifyJwt(jwt: string, key: string): Promise<boolean> {
+async function verifyAccessJwt(
+  request: Request,
+  env: Env,
+): Promise<boolean> {
+  const token = request.headers.get("Cf-Access-Jwt-Assertion");
+  if (!token) return false;
+
+  // Local dev without Access: accept any present assertion header.
+  if (!env.CF_ACCESS_TEAM_DOMAIN) return true;
+
+  const issuer = teamDomainUrl(env.CF_ACCESS_TEAM_DOMAIN);
+  const JWKS = createRemoteJWKSet(
+    new URL(`${issuer}/cdn-cgi/access/certs`),
+  );
+
   try {
-    const parts = jwt.split(".");
-    if (parts.length !== 3) return false;
-
-    const payload = decodeJwtPayload(jwt);
-    if (!payload) return false;
-
-    if (
-      typeof payload.exp === "number" &&
-      payload.exp < Math.floor(Date.now() / 1000)
-    )
-      return false;
-
-    const encoder = new TextEncoder();
-    const keyData = await crypto.subtle.importKey(
-      "raw",
-      encoder.encode(key),
-      { name: "HMAC", hash: "SHA-256" },
-      false,
-      ["verify"],
-    );
-    const sigBytes = atob(
-      parts[2].replace(/-/g, "+").replace(/_/g, "/"),
-    );
-    const sig = new Uint8Array(sigBytes.length);
-    for (let i = 0; i < sigBytes.length; i++) sig[i] = sigBytes.charCodeAt(i);
-    return crypto.subtle.verify(
-      "HMAC",
-      keyData,
-      sig,
-      encoder.encode(`${parts[0]}.${parts[1]}`),
-    );
+    await jwtVerify(token, JWKS, {
+      issuer,
+      ...(env.CF_ACCESS_AUD ? { audience: env.CF_ACCESS_AUD } : {}),
+    });
+    return true;
   } catch {
     return false;
   }
-}
-
-async function signJwt(
-  payload: Record<string, unknown>,
-  key: string,
-): Promise<string> {
-  const encoder = new TextEncoder();
-  const header = { alg: "HS256", typ: "JWT" };
-  const base64url = (s: string) =>
-    btoa(s).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
-
-  const partialToken =
-    base64url(JSON.stringify(header)) +
-    "." +
-    base64url(JSON.stringify(payload));
-
-  const keyData = await crypto.subtle.importKey(
-    "raw",
-    encoder.encode(key),
-    { name: "HMAC", hash: "SHA-256" },
-    false,
-    ["sign"],
-  );
-  const sig = await crypto.subtle.sign(
-    "HMAC",
-    keyData,
-    encoder.encode(partialToken),
-  );
-  const signature = base64url(
-    String.fromCharCode(...new Uint8Array(sig)),
-  );
-
-  return `${partialToken}.${signature}`;
-}
-
-function generateCode(): string {
-  const bytes = new Uint8Array(32);
-  crypto.getRandomValues(bytes);
-  const base64url = (s: string) =>
-    btoa(s).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
-  return base64url(String.fromCharCode(...bytes));
-}
-
-async function verifyCodeChallenge(
-  verifier: string,
-  challenge: string,
-): Promise<boolean> {
-  const encoder = new TextEncoder();
-  const hash = await crypto.subtle.digest("SHA-256", encoder.encode(verifier));
-  const base64url = (s: string) =>
-    btoa(s).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
-  return (
-    base64url(String.fromCharCode(...new Uint8Array(hash))) === challenge
-  );
 }
 
 async function createGoogleTask(
@@ -407,42 +311,8 @@ async function handleMcpRequest(
   }
 }
 
-function authorizeForm(baseUrl: string, query: string): string {
-  return `<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>Google Task MCP — Authorize</title>
-  <link rel="icon" href="${APP_ICON}">
-  <style>
-    * { box-sizing:border-box;margin:0;padding:0 }
-    body { font-family:system-ui,sans-serif;background:#f5f5f5;display:flex;justify-content:center;align-items:center;min-height:100vh }
-    .card { background:#fff;padding:2rem;border-radius:12px;box-shadow:0 2px 8px rgba(0,0,0,.1);max-width:400px;width:100%;text-align:center }
-    .icon { width:48px;height:48px;margin-bottom:1rem }
-    h1 { font-size:1.25rem;margin-bottom:.5rem }
-    p { color:#666;margin-bottom:1.5rem;font-size:.9rem }
-    label { display:block;font-size:.85rem;font-weight:600;margin-bottom:.5rem;text-align:left }
-    input { width:100%;padding:.6rem;border:1px solid #ddd;border-radius:6px;font-size:.9rem;margin-bottom:1rem }
-    button { width:100%;padding:.6rem;background:#1a1a1a;color:#fff;border:none;border-radius:6px;font-size:.9rem;cursor:pointer }
-    button:hover { background:#333 }
-    .error { color:#d00;font-size:.85rem;margin-bottom:1rem }
-  </style>
-</head>
-<body>
-  <div class="card">
-    <img class="icon" src="${APP_ICON}" alt="Google Tasks" width="48" height="48">
-    <h1>Google Task MCP</h1>
-    <p>Enter the server API key to grant Grok access to your Google Tasks.</p>
-    <form method="post">
-      <label for="key">API Key</label>
-      <input id="key" name="key" type="password" autofocus required>
-      <input type="hidden" name="q" value="${query.replace(/"/g, "&quot;")}">
-      <button type="submit">Authorize</button>
-    </form>
-  </div>
-</body>
-</html>`;
+function isMcpPath(path: string): boolean {
+  return path === "/" || path === "/mcp";
 }
 
 export default {
@@ -454,172 +324,21 @@ export default {
       return new Response(null, { headers: corsHeaders() });
     }
 
-    if (path === "/.well-known/oauth-authorization-server") {
-      return jsonResponse({
-        issuer: url.origin,
-        authorization_endpoint: `${url.origin}/oauth/authorize`,
-        token_endpoint: `${url.origin}/oauth/token`,
-        grant_types_supported: ["authorization_code"],
-        response_types_supported: ["code"],
-        token_endpoint_auth_methods_supported: ["none"],
-        code_challenge_methods_supported: ["S256"],
-      });
-    }
-
-    if (path === "/oauth/authorize" && request.method === "GET") {
-      return htmlResponse(authorizeForm(url.origin, url.search));
-    }
-
-    if (path === "/oauth/authorize" && request.method === "POST") {
-      const form = await request.formData();
-      const key = form.get("key") as string | null;
-      const q = form.get("q") as string | null;
-
-      if (!key || key !== env.API_KEY) {
-        return htmlResponse(
-          authorizeForm(url.origin, q ?? "").replace(
-            "</form>",
-            '<p class="error">Invalid API key.</p></form>',
-          ),
-          403,
-        );
-      }
-
-      if (!q) {
-        return jsonResponse(
-          { error: "missing_authorization_request" },
-          400,
-        );
-      }
-
-      const authParams = new URLSearchParams(q);
-      const redirectUri = authParams.get("redirect_uri");
-      const codeChallenge = authParams.get("code_challenge");
-      const codeChallengeMethod = authParams.get("code_challenge_method");
-      const state = authParams.get("state");
-
-      if (
-        !redirectUri ||
-        !codeChallenge ||
-        codeChallengeMethod !== "S256"
-      ) {
-        return jsonResponse(
-          { error: "invalid_request", error_description: "Missing required OAuth parameters." },
-          400,
-        );
-      }
-
-      const code = generateCode();
-      codes.set(code, {
-        codeChallenge,
-        redirectUri,
-        expiresAt: Date.now() + 300_000,
-      });
-
-      const redirect = new URL(redirectUri);
-      redirect.searchParams.set("code", code);
-      if (state) redirect.searchParams.set("state", state);
-      return Response.redirect(redirect.toString(), 302);
-    }
-
-    if (path === "/oauth/token" && request.method === "POST") {
-      let body: Record<string, string>;
-      try {
-        body = (await request.json()) as Record<string, string>;
-      } catch {
-        return jsonResponse(
-          { error: "invalid_request", error_description: "Invalid JSON." },
-          400,
-        );
-      }
-
-      if (body.grant_type !== "authorization_code") {
-        return jsonResponse(
-          { error: "unsupported_grant_type" },
-          400,
-        );
-      }
-
-      const { code, code_verifier } = body;
-      if (!code || !code_verifier) {
-        return jsonResponse(
-          { error: "invalid_request", error_description: "code and code_verifier required." },
-          400,
-        );
-      }
-
-      const entry = codes.get(code);
-      if (!entry || entry.expiresAt < Date.now()) {
-        return jsonResponse(
-          { error: "invalid_grant", error_description: "Invalid or expired authorization code." },
-          400,
-        );
-      }
-      codes.delete(code);
-
-      const pkceOk = await verifyCodeChallenge(
-        code_verifier,
-        entry.codeChallenge,
-      );
-      if (!pkceOk) {
-        return jsonResponse(
-          { error: "invalid_grant", error_description: "code_verifier does not match." },
-          400,
-        );
-      }
-
-      if (!env.OAUTH_SIGNING_KEY) {
-        return jsonResponse(
-          { error: "server_error", error_description: "OAuth signing key not configured." },
-          500,
-        );
-      }
-
-      const now = Math.floor(Date.now() / 1000);
-      const accessToken = await signJwt(
-        {
-          iss: url.origin,
-          iat: now,
-          exp: now + 3600,
-        },
-        env.OAUTH_SIGNING_KEY,
-      );
-
-      return jsonResponse({
-        access_token: accessToken,
-        token_type: "bearer",
-        expires_in: 3600,
-      });
-    }
-
-    if (path !== "/mcp") {
+    if (!isMcpPath(path)) {
       return jsonResponse(
         rpcError(null, -32600, `Not found: ${path}`),
         404,
       );
     }
 
-    const token =
-      request.headers.get("Authorization")?.replace(/^Bearer\s+/i, "");
-
-    if (!token) {
-      return jsonResponse(
-        rpcError(null, -32001, "Unauthorized: missing bearer token"),
-        401,
-      );
-    }
-
-    let authed = false;
-
-    if (env.API_KEY && token === env.API_KEY) {
-      authed = true;
-    } else if (env.OAUTH_SIGNING_KEY) {
-      authed = await verifyJwt(token, env.OAUTH_SIGNING_KEY);
-    }
-
+    const authed = await verifyAccessJwt(request, env);
     if (!authed) {
       return jsonResponse(
-        rpcError(null, -32001, "Unauthorized: invalid token"),
+        rpcError(
+          null,
+          -32001,
+          "Unauthorized: Cloudflare Access authentication required",
+        ),
         401,
       );
     }
