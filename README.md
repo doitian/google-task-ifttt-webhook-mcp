@@ -65,6 +65,7 @@ Create an applet on IFTTT:
    - **Application domain**: `google-task-mcp.yourdomain.com` (or a `*.workers.dev` subdomain)
    - **Identity providers**: Select your preferred IdP (Google, GitHub, email OTP, etc.)
    - **Policy**: Create an allow policy for the users who should access the MCP server
+   - **Managed OAuth (Beta)**: Must be enabled
 4. Note your **team domain** (e.g. `myteam.cloudflareaccess.com`) and the **Application Audience (AUD)** tag
 5. Set them in `wrangler.jsonc` or via wrangler vars:
 
